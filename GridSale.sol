@@ -424,41 +424,12 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
     ) internal virtual {}
 }
 
-contract GridSale is ERC20, Ownable {
+contract UniSale is ERC20, Ownable {
     IUniswapV2Router02 public uniswapV2Router;
     address public  uniswapV2Pair;
 
-    mapping (address => bool) private _isExcludedFromFees;
-    mapping(address => bool) private _isExcludedFromMaxTxLimit;
-
-    uint256 public buyFee;
-    uint256 public sellFee;
-    uint256 public walletToWalletTransferFee;
-    address public feeReceiver;
-
-    uint256 public swapTokensAtAmount;
-    bool    public swapEnabled;
-    bool    private swapping;
-
-    bool    public  maxTransactionLimitEnabled;
-    uint256 public  maxTransactionAmountBuy;
-    uint256 public  maxTransactionAmountSell;
-
-    bool    public tradingEnabled;
-
-    event ExcludedFromMaxTransactionLimit(address indexed account, bool isExcluded);
-    event MaxTransactionLimitStateChanged(bool maxTransactionLimit);
-    event MaxTransactionLimitAmountChanged(uint256 maxTransactionAmountBuy, uint256 maxTransactionAmountSell);
-    event ExcludeFromFees(address indexed account, bool isExcluded);
-    event FeeReceiverChanged(address indexed feeReceiver);
-    event UpdateBuyFee(uint256 buyFee);
-    event UpdateSellFee(uint256 sellFee);
-    event UpdateWalletToWalletTransferFee(uint256 walletToWalletTransferFee);
-    event SwapAndSendFee(uint256 tokensSwapped, uint256 bnbSend);
-    event SwapTokensAtAmountUpdated(uint256 swapTokensAtAmount);
-
-    constructor () ERC20("GridSale", "GRID") 
-    {   
+    constructor () ERC20("UniSale", "UNI") 
+    {
         address router;
         if (block.chainid == 56) {
             router = 0x10ED43C718714eb63d5aA57B78B54704E256024E; // BSC Pancake Mainnet Router
@@ -479,207 +450,20 @@ contract GridSale is ERC20, Ownable {
 
         _approve(address(this), address(uniswapV2Router), type(uint256).max);
 
-        buyFee  = 0;
-        sellFee = 0;
-        walletToWalletTransferFee = 0;
-
-        feeReceiver = msg.sender;
-
-        _isExcludedFromMaxTxLimit[owner()] = true;
-        _isExcludedFromMaxTxLimit[address(this)] = true;
-        _isExcludedFromMaxTxLimit[address(0xdead)] = true;
-        _isExcludedFromMaxTxLimit[feeReceiver] = true;
-
-        _isExcludedFromFees[owner()] = true;
-        _isExcludedFromFees[address(0xdead)] = true;
-        _isExcludedFromFees[address(this)] = true;
-        _isExcludedFromFees[feeReceiver] = true;
-
         _mint(owner(), 1e8 * (10 ** decimals()));
-        swapTokensAtAmount = totalSupply() / 5000;
-        swapEnabled = false;
-
-        maxTransactionLimitEnabled = false;
-        maxTransactionAmountBuy    = totalSupply() / 10000; // 0.01% of total supply
-        maxTransactionAmountSell   = totalSupply() / 10000; // 0.01% of total supply
     }
 
     receive() external payable {}
 
-    function claimStuckTokens(address token) external onlyOwner {
-        if (token == address(0x0)) {
-            (bool success, ) = msg.sender.call{value: address(this).balance}("");
-            require(success, "failed to transfer stuck value");
-            return;
-        }
-        IERC20 ERC20token = IERC20(token);
-        uint256 balance = ERC20token.balanceOf(address(this));
-        ERC20token.transfer(msg.sender, balance);
-    }
-
-    function excludeFromFees(address account, bool excluded) external onlyOwner{
-        require(_isExcludedFromFees[account] != excluded,"Account is already the value of 'excluded'");
-        _isExcludedFromFees[account] = excluded;
-
-        emit ExcludeFromFees(account, excluded);
-    }
-
-    function isExcludedFromFees(address account) public view returns(bool) {
-        return _isExcludedFromFees[account];
-    }
-
-    function updateBuyFee(uint256 _buyFee) external onlyOwner {
-        require(_buyFee <= 10, "Buy Fee cannot be more than 10%");
-        buyFee = _buyFee;
-        emit UpdateBuyFee(buyFee);
-    }
-
-    function updateSellFee(uint256 _sellFee) external onlyOwner {
-        require(_sellFee <= 10, "Sell Fee cannot be more than 10%");
-        sellFee = _sellFee;
-        emit UpdateSellFee(sellFee);
-    }
-
-    function updateWalletToWalletTransferFee(uint256 _walletToWalletTransferFee) external onlyOwner {
-        require(_walletToWalletTransferFee <= 10, "Wallet to Wallet Transfer Fee cannot be more than 10%");
-        walletToWalletTransferFee = _walletToWalletTransferFee;
-        emit UpdateWalletToWalletTransferFee(walletToWalletTransferFee);
-    }
-
-    function changeFeeReceiver(address _feeReceiver) external onlyOwner {
-        require(_feeReceiver != address(0), "Fee Receiver cannot be zero address");
-        feeReceiver = _feeReceiver;
-        emit FeeReceiverChanged(feeReceiver);
-    }
-
-    function enableTrading() external onlyOwner {
-        require(!tradingEnabled, "Trading is already enabled");
-        tradingEnabled = true;
-    }
-    
     function _transfer(address from,address to,uint256 amount) internal  override {
         require(from != address(0), "ERC20: transfer from the zero address");
         require(to != address(0), "ERC20: transfer to the zero address");
-        require(tradingEnabled || _isExcludedFromFees[from] || _isExcludedFromFees[to], "Trading is not enabled yet");
-       
+
         if (amount == 0) {
             super._transfer(from, to, 0);
             return;
         }
 
-        if (maxTransactionLimitEnabled) 
-        {
-            if ((from == uniswapV2Pair || to == uniswapV2Pair) &&
-                _isExcludedFromMaxTxLimit[from] == false && 
-                _isExcludedFromMaxTxLimit[to]   == false
-            ) {
-                if (from == uniswapV2Pair) {
-                    require(
-                        amount <= maxTransactionAmountBuy,  
-                        "MaxTransaction: Transfer amount exceeds the maxTransactionAmount"
-                    );
-                } else {
-                    require(
-                        amount <= maxTransactionAmountSell, 
-                        "MaxTransaction: Transfer amount exceeds the maxTransactionAmount"
-                    );
-                }
-            }
-        }
-
-		uint256 contractTokenBalance = balanceOf(address(this));
-
-        bool canSwap = contractTokenBalance >= swapTokensAtAmount;
-
-        if (canSwap &&
-            !swapping &&
-            to == uniswapV2Pair &&
-            swapEnabled
-        ) {
-            swapping = true;
-            
-            swapAndSendMarketing(contractTokenBalance);
-
-            swapping = false;
-        }
-
-        uint256 _totalFees;
-        if (_isExcludedFromFees[from] || _isExcludedFromFees[to] || swapping) {
-            _totalFees = 0;
-        } else if (from == uniswapV2Pair) {
-            _totalFees = buyFee;
-        } else if (to == uniswapV2Pair) {
-            _totalFees = sellFee;
-        } else {
-            _totalFees = walletToWalletTransferFee;
-        }
-
-        if (_totalFees > 0) {
-            uint256 fees = (amount * _totalFees) / 100;
-            amount = amount - fees;
-            super._transfer(from, address(this), fees);
-        }
-
         super._transfer(from, to, amount);
-    }
-
-    function setSwapEnabled(bool enable) external onlyOwner {
-        require(enable != swapEnabled, "Swap is already set to that state");
-        swapEnabled = enable;
-    }
-
-    function setSwapTokensAtAmount(uint256 newAmount) external onlyOwner{
-        require(newAmount > totalSupply() / 1000000, "SwapTokensAtAmount must be greater than 0.0001% of total supply");
-        swapTokensAtAmount = newAmount;
-        emit SwapTokensAtAmountUpdated(swapTokensAtAmount);
-    }
-
-    function swapAndSendMarketing(uint256 tokenAmount) private {
-        uint256 initialBalance = address(this).balance;
-
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = uniswapV2Router.WETH();
-
-        uniswapV2Router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-            tokenAmount,
-            0,
-            path,
-            address(this),
-            block.timestamp);
-
-        uint256 newBalance = address(this).balance - initialBalance;
-
-        bool success = payable(feeReceiver).send(newBalance);
-        if (success) {
-            emit SwapAndSendFee(tokenAmount, newBalance);
-        }
-    }
-
-    function setEnableMaxTransactionLimit(bool enable) external onlyOwner {
-        require(enable != maxTransactionLimitEnabled, "Max transaction limit is already set to that state");
-        maxTransactionLimitEnabled = enable;
-        emit MaxTransactionLimitStateChanged(maxTransactionLimitEnabled);
-    }
-
-    function setMaxTransactionAmounts(uint256 _maxTransactionAmountBuy, uint256 _maxTransactionAmountSell) external onlyOwner {
-        require(
-            _maxTransactionAmountBuy  >= (totalSupply() / (10 ** decimals())) / 10000 && 
-            _maxTransactionAmountSell >= (totalSupply() / (10 ** decimals())) / 10000, 
-            "Max Transaction limis cannot be lower than 0.01% of total supply"
-        ); 
-        maxTransactionAmountBuy  = _maxTransactionAmountBuy  * (10 ** decimals());
-        maxTransactionAmountSell = _maxTransactionAmountSell * (10 ** decimals());
-        emit MaxTransactionLimitAmountChanged(maxTransactionAmountBuy, maxTransactionAmountSell);
-    }
-
-    function setExcludeFromMaxTransactionLimit(address account, bool exclude) external onlyOwner {
-        require( _isExcludedFromMaxTxLimit[account] != exclude, "Account is already set to that state");
-        _isExcludedFromMaxTxLimit[account] = exclude;
-        emit ExcludedFromMaxTransactionLimit(account, exclude);
-    }
-
-    function isExcludedFromMaxTransaction(address account) public view returns(bool) {
-        return _isExcludedFromMaxTxLimit[account];
     }
 }
