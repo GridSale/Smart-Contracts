@@ -194,7 +194,7 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
 }
 
 contract UniSale is ERC20 {
-    constructor () ERC20("UniSale", "UNI") {
+    constructor () ERC20("UniSale", "UNISALE") {
         _mint(_msgSender(), 1e8 * (10 ** decimals()));
     }
 }
